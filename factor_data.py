@@ -13,6 +13,7 @@ SOURCES = ("msp", "iemocap", "crema_d")
 SOURCE_EMOTIONS = {
     "iemocap": ("angry", "happy", "neutral", "sad", "excited", "frustrated"),
 }
+MIN_CLASS_ROWS = 300
 FACTOR_GROUPS = {
     "pitch": (
         "F0semitoneFrom27.5Hz_sma3nz_stddevNorm",
@@ -38,7 +39,7 @@ FACTOR_COLUMNS = tuple(
 TARGET_COLUMNS = tuple(f"factor_target.{column}" for column in FACTOR_COLUMNS)
 
 
-class PooledTrainingDataset(TemplateDataset):
+class ExpertTrainingDataset(TemplateDataset):
     def __init__(self, frame, include_factor_targets):
         super().__init__(
             frame,
@@ -99,14 +100,11 @@ def shuffle_targets_within_source_emotion(frame, seed):
     return shuffled
 
 
-def corpus_emotion_sampler(frame):
-    counts = frame.groupby(["_source_corpus", "emotion"]).size()
-    classes_per_source = frame.groupby("_source_corpus")["emotion"].nunique()
+def emotion_balanced_sampler(frame):
+    counts = frame.groupby("emotion").size()
     weights = [
-        1.0 / (classes_per_source[source] * counts[source, emotion])
-        for source, emotion in frame[["_source_corpus", "emotion"]].itertuples(
-            index=False, name=None
-        )
+        1.0 / (len(counts) * counts[emotion])
+        for emotion in frame["emotion"]
     ]
     return WeightedRandomSampler(
         torch.tensor(weights, dtype=torch.double),
@@ -115,62 +113,60 @@ def corpus_emotion_sampler(frame):
     )
 
 
-def load_pooled_training_data(
+def load_source_training_data(
+    source,
     split_root,
     feature_root,
     shuffle_factor_targets=False,
     seed=3407,
 ):
-    frames = []
-    emotions_by_source = {}
-    train_csvs = {}
-    dev_csvs = {}
-    for source in SOURCES:
-        train_csv = os.path.join(split_root, source, "train.csv")
-        dev_csv = os.path.join(split_root, source, "development.csv")
-        feature_csv = os.path.join(feature_root, f"{source}_train_eGeMAPSv02.csv")
-        frame = load_training_frame(
-            train_csv,
-            feature_csv,
-            "/",
-            emotions=SOURCE_EMOTIONS.get(source),
-            include_dimensions=False,
+    if source not in SOURCES:
+        raise ValueError(f"Unsupported source: {source}")
+    train_csv = os.path.join(split_root, source, "train.csv")
+    dev_csv = os.path.join(split_root, source, "development.csv")
+    feature_csv = os.path.join(feature_root, f"{source}_train_eGeMAPSv02.csv")
+    frame = load_training_frame(
+        train_csv,
+        feature_csv,
+        "/",
+        emotions=SOURCE_EMOTIONS.get(source),
+        include_dimensions=False,
+    )
+    frame["_source_corpus"] = source
+    frame = add_source_quantile_targets(frame)
+    emotions = sorted(frame["emotion"].unique())
+    counts = frame["emotion"].value_counts()
+    too_small = counts[counts < MIN_CLASS_ROWS].sort_index().to_dict()
+    if too_small:
+        raise ValueError(
+            f"{source} Train classes below {MIN_CLASS_ROWS} rows: {too_small}"
         )
-        frame["_source_corpus"] = source
-        frame = add_source_quantile_targets(frame)
-        emotions = sorted(frame["emotion"].unique())
-        dev_emotions = set(
-            pd.read_csv(dev_csv, usecols=["gt_emo"])["gt_emo"]
-            .astype(str)
-            .str.lower()
-        )
-        selected_emotions = SOURCE_EMOTIONS.get(source)
-        if selected_emotions:
-            missing_train = sorted(set(selected_emotions) - set(emotions))
-            missing_dev = sorted(set(selected_emotions) - dev_emotions)
-            if missing_train or missing_dev:
-                raise ValueError(
-                    f"{source} selected labels missing from "
-                    f"Train={missing_train}, Development={missing_dev}"
-                )
-        else:
-            invalid = sorted(dev_emotions - set(emotions))
-            if invalid:
-                raise ValueError(
-                    f"{source} Development labels absent from Train: {invalid}"
-                )
-        frames.append(frame)
-        emotions_by_source[source] = emotions
-        train_csvs[source] = train_csv
-        dev_csvs[source] = dev_csv
-
-    pooled = pd.concat(frames, ignore_index=True)
+    dev_emotions = set(
+        pd.read_csv(dev_csv, usecols=["gt_emo"])["gt_emo"]
+        .astype(str)
+        .str.lower()
+    )
+    selected_emotions = SOURCE_EMOTIONS.get(source)
+    if selected_emotions:
+        missing_train = sorted(set(selected_emotions) - set(emotions))
+        missing_dev = sorted(set(selected_emotions) - dev_emotions)
+        if missing_train or missing_dev:
+            raise ValueError(
+                f"{source} selected labels missing from "
+                f"Train={missing_train}, Development={missing_dev}"
+            )
+    else:
+        invalid = sorted(dev_emotions - set(emotions))
+        if invalid:
+            raise ValueError(
+                f"{source} Development labels absent from Train: {invalid}"
+            )
     if shuffle_factor_targets:
-        pooled = shuffle_targets_within_source_emotion(pooled, seed)
+        frame = shuffle_targets_within_source_emotion(frame, seed)
     return (
-        pooled,
-        corpus_emotion_sampler(pooled),
-        emotions_by_source,
-        train_csvs,
-        dev_csvs,
+        frame,
+        emotion_balanced_sampler(frame),
+        emotions,
+        train_csv,
+        dev_csv,
     )

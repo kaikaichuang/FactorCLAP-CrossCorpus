@@ -19,28 +19,28 @@ from transformers import logging as transformers_logging
 from dataset import AUDIO_SAMPLES, SAMPLE_RATE
 from evaluate import evaluate_csv
 from factor_data import (
+    ExpertTrainingDataset,
     FACTOR_GROUPS,
-    PooledTrainingDataset,
-    SOURCE_EMOTIONS,
+    MIN_CLASS_ROWS,
     SOURCES,
+    load_source_training_data,
 )
-from factor_data import load_pooled_training_data
 from factor_model import FactorCLAP
 from integrity import file_sha256
-from loss_smoothclap import SmoothCLAPLoss
 from losses import class_aware_clap_loss, grouped_factor_loss
-from models_xin import ParaCLAP, SmoothCLAP
+from models_xin import ParaCLAP
 
 
 REPO_ROOT = Path(__file__).resolve().parent
-CONDITIONS = ("e0_emotion", "e1_smooth", "e2_factor", "e3_shuffled_factor")
+CONDITIONS = ("e0_emotion", "e2_factor", "e3_shuffled_factor")
 SEED = 3407
 BATCH_SIZE = 32
 EPOCHS = 30
 
 
 def parse_args():
-    parser = argparse.ArgumentParser("Train one pooled first-principles condition")
+    parser = argparse.ArgumentParser("Train one source-specific expert condition")
+    parser.add_argument("--source", choices=SOURCES, required=True)
     parser.add_argument("--condition", choices=CONDITIONS, required=True)
     parser.add_argument("--split-root", required=True)
     parser.add_argument("--feature-root", required=True)
@@ -100,11 +100,6 @@ def build_model(condition, config):
         "embedding_dim": 768,
         "train_audio_encoder": True,
     }
-    if condition == "e1_smooth":
-        return SmoothCLAP(
-            **common,
-            local_speech_name=config["models"]["local_speech"],
-        )
     if condition in {"e2_factor", "e3_shuffled_factor"}:
         return FactorCLAP(**common)
     return ParaCLAP(**common)
@@ -113,20 +108,20 @@ def build_model(condition, config):
 def experiment_contract(
     args,
     config,
-    train_csvs,
-    dev_csvs,
+    emotions,
+    train_csv,
+    dev_csv,
 ):
     input_paths = {
         "initial_state": args.initial_state,
         "config": str(REPO_ROOT / "configs/config.yaml"),
-    }
-    for source in SOURCES:
-        input_paths[f"{source}_train"] = train_csvs[source]
-        input_paths[f"{source}_development"] = dev_csvs[source]
-        input_paths[f"{source}_features"] = os.path.join(
+        f"{args.source}_train": train_csv,
+        f"{args.source}_development": dev_csv,
+        f"{args.source}_features": os.path.join(
             args.feature_root,
-            f"{source}_train_eGeMAPSv02.csv",
-        )
+            f"{args.source}_train_eGeMAPSv02.csv",
+        ),
+    }
     code_commit = subprocess.check_output(
         ["git", "rev-parse", "HEAD"],
         cwd=REPO_ROOT,
@@ -137,6 +132,7 @@ def experiment_contract(
         "e3_shuffled_factor",
     }
     return {
+        "source": args.source,
         "condition": args.condition,
         "seed": SEED,
         "epochs": EPOCHS,
@@ -148,19 +144,17 @@ def experiment_contract(
             if args.condition == "e3_shuffled_factor"
             else "none"
         ),
-        "sampling": "corpus_then_emotion_uniform",
-        "source_emotions": SOURCE_EMOTIONS,
+        "sampling": "emotion_uniform_within_source",
+        "draws_per_epoch": "source_train_rows",
+        "source_emotions": emotions,
+        "minimum_class_rows": MIN_CLASS_ROWS,
         "audio_view": {
             "selection": "center",
             "samples": AUDIO_SAMPLES,
             "sample_rate": SAMPLE_RATE,
         },
         "main_caption": "emotion_only",
-        "main_loss": (
-            "smoothclap"
-            if args.condition == "e1_smooth"
-            else "class_aware_multi_positive"
-        ),
+        "main_loss": "class_aware_multi_positive",
         "train_audio_encoder": True,
         "train_text_encoder": True,
         "config": config,
@@ -188,9 +182,6 @@ def load_shared_initial_state(
     if initial.get("embedding_dim") != 768:
         raise ValueError("Initial-state embedding dimension is not 768")
     state = initial["model"]
-    if condition == "e1_smooth":
-        model.load_state_dict(state)
-        return
     model_keys = set(model.state_dict())
     shared = {name: value for name, value in state.items() if name in model_keys}
     missing = model_keys - set(shared)
@@ -233,7 +224,6 @@ def train_epoch(
     tokenizer,
     optimizer,
     condition,
-    smooth_criterion,
     factor_weight,
     device,
     writer,
@@ -244,15 +234,10 @@ def train_epoch(
     totals = {"loss": 0.0, "emotion": 0.0, "factor": 0.0}
     progress = tqdm.tqdm(loader, desc=f"Train epoch {epoch}", disable=tqdm_disable)
     for batch_index, batch in enumerate(progress):
-        audio, audio_mask, captions, tags, labels, _, factor_targets = batch
+        audio, audio_mask, captions, _, labels, _, factor_targets = batch
         caption_tokens = tokenizer.batch_encode_plus(
             list(captions), padding=True, truncation=True, return_tensors="pt"
         ).to(device)
-        tag_tokens = None
-        if condition == "e1_smooth":
-            tag_tokens = tokenizer.batch_encode_plus(
-                list(tags), padding=True, truncation=True, return_tensors="pt"
-            ).to(device)
         audio = audio.to(device)
         audio_mask = audio_mask.to(device)
         optimizer.zero_grad()
@@ -260,13 +245,11 @@ def train_epoch(
             outputs = model(
                 audio,
                 caption_tokens,
-                tag_tokens,
+                None,
                 audio_attention_mask=audio_mask,
             )
             factor_loss = torch.zeros((), device=device)
-            if condition == "e1_smooth":
-                emotion_loss = smooth_criterion(*outputs)
-            elif condition in {"e2_factor", "e3_shuffled_factor"}:
+            if condition in {"e2_factor", "e3_shuffled_factor"}:
                 text_features, audio_features, factor_predictions, logit_scale = outputs
                 emotion_loss = class_aware_clap_loss(
                     text_features, audio_features, labels, logit_scale
@@ -298,27 +281,24 @@ def train_epoch(
 def evaluate_development(
     model,
     tokenizer,
-    dev_csvs,
-    emotions_by_source,
+    dev_csv,
+    emotions,
     device,
     output_root,
     tqdm_disable,
 ):
-    results = {}
-    for source in SOURCES:
-        results[source] = evaluate_csv(
-            model=model,
-            tokenizer=tokenizer,
-            csv_path=dev_csvs[source],
-            audio_root="/",
-            candidate_emotions=emotions_by_source[source],
-            emotions=emotions_by_source[source],
-            device=device,
-            batch_size=BATCH_SIZE,
-            output_csv=os.path.join(output_root, f"dev_latest_{source}.csv"),
-            tqdm_disable=tqdm_disable,
-        )
-    return results
+    return evaluate_csv(
+        model=model,
+        tokenizer=tokenizer,
+        csv_path=dev_csv,
+        audio_root="/",
+        candidate_emotions=emotions,
+        emotions=emotions,
+        device=device,
+        batch_size=BATCH_SIZE,
+        output_csv=os.path.join(output_root, "dev_latest.csv"),
+        tqdm_disable=tqdm_disable,
+    )
 
 
 def main():
@@ -333,8 +313,9 @@ def main():
         config = yaml.safe_load(file)
 
     factor_condition = args.condition in {"e2_factor", "e3_shuffled_factor"}
-    pooled, sampler, emotions_by_source, train_csvs, dev_csvs = (
-        load_pooled_training_data(
+    training_frame, sampler, emotions, train_csv, dev_csv = (
+        load_source_training_data(
+            args.source,
             args.split_root,
             args.feature_root,
             shuffle_factor_targets=args.condition == "e3_shuffled_factor",
@@ -342,7 +323,9 @@ def main():
         )
     )
     loader = DataLoader(
-        PooledTrainingDataset(pooled, include_factor_targets=factor_condition),
+        ExpertTrainingDataset(
+            training_frame, include_factor_targets=factor_condition
+        ),
         batch_size=BATCH_SIZE,
         sampler=sampler,
         num_workers=0,
@@ -359,10 +342,7 @@ def main():
     )
     tokenizer = AutoTokenizer.from_pretrained(config["models"]["text"])
     optimizer = build_optimizer(model, config)
-    smooth_settings = dict(config["smoothclap"])
-    smooth_settings["detach_targets"] = False
-    smooth_criterion = SmoothCLAPLoss(**smooth_settings)
-    contract = experiment_contract(args, config, train_csvs, dev_csvs)
+    contract = experiment_contract(args, config, emotions, train_csv, dev_csv)
     # Model construction consumes a condition-dependent number of random draws.
     # Reset before the first loader iteration so E0/E2/E3 share sampler, crop,
     # caption-template, and dropout streams. Resume restores the saved stream.
@@ -395,17 +375,14 @@ def main():
         best_uar = checkpoint["best_uar"]
         best_epoch = checkpoint["best_epoch"]
 
-    print(f"Condition: {args.condition}")
-    print("Sources: MSP, IEMOCAP, CREMA-D")
-    print("Sampling: corpus-uniform, emotion-uniform within corpus")
-    print("Checkpoint: equal mean of three source Development native UARs")
+    print(f"Source: {args.source}; condition: {args.condition}")
+    print("Sampling: emotion-uniform within source")
+    print("Checkpoint: source Development native UAR")
     print("Main captions: emotion-only; audio and text encoders: trainable")
     print(f"Factor groups: {FACTOR_GROUPS if factor_condition else 'none'}")
     print(f"Factor weight: {args.factor_weight if factor_condition else 0.0}")
-    for source in SOURCES:
-        rows = int((pooled["_source_corpus"] == source).sum())
-        print(f"{source}: Train rows={rows}; emotions={emotions_by_source[source]}")
-    print(f"Rows/draws per epoch: {len(pooled)}; epochs: {start_epoch}-{EPOCHS}")
+    print(f"Train rows/draws per epoch: {len(training_frame)}; emotions={emotions}")
+    print(f"Epochs: {start_epoch}-{EPOCHS}")
 
     metrics_path = os.path.join(args.results, "metrics.csv")
     for epoch in range(start_epoch, EPOCHS + 1):
@@ -416,7 +393,6 @@ def main():
             tokenizer,
             optimizer,
             args.condition,
-            smooth_criterion,
             args.factor_weight,
             device,
             writer,
@@ -426,30 +402,27 @@ def main():
         dev = evaluate_development(
             model,
             tokenizer,
-            dev_csvs,
-            emotions_by_source,
+            dev_csv,
+            emotions,
             device,
             output_root,
             args.tqdm_disable,
         )
-        mean_uar = sum(dev[source]["UAR"] for source in SOURCES) / len(SOURCES)
+        dev_uar = dev["UAR"]
         row = {
             "epoch": epoch,
             "train_loss": train_losses["loss"],
             "train_emotion_loss": train_losses["emotion"],
             "train_factor_loss": train_losses["factor"],
-            "mean_dev_uar": mean_uar,
+            "dev_uar": dev_uar,
         }
-        for source in SOURCES:
-            row[f"{source}_dev_uar"] = dev[source]["UAR"]
-            writer.add_scalar(f"eval/{source}_UAR", dev[source]["UAR"], epoch)
         save_metrics(metrics_path, row)
         for name, value in train_losses.items():
             writer.add_scalar(f"loss/epoch_{name}", value, epoch)
-        writer.add_scalar("eval/mean_UAR", mean_uar, epoch)
+        writer.add_scalar("eval/UAR", dev_uar, epoch)
 
-        if mean_uar > best_uar:
-            best_uar = mean_uar
+        if dev_uar > best_uar:
+            best_uar = dev_uar
             best_epoch = epoch
             atomic_torch_save(
                 {
@@ -461,13 +434,9 @@ def main():
                 },
                 os.path.join(args.results, "best.pth.tar"),
             )
-            for source in SOURCES:
-                pd.read_csv(
-                    os.path.join(output_root, f"dev_latest_{source}.csv")
-                ).to_csv(
-                    os.path.join(output_root, f"dev_best_{source}.csv"),
-                    index=False,
-                )
+            pd.read_csv(os.path.join(output_root, "dev_latest.csv")).to_csv(
+                os.path.join(output_root, "dev_best.csv"), index=False
+            )
 
         checkpoint = {
             "epoch": epoch,
@@ -484,7 +453,7 @@ def main():
             f"Epoch {epoch}: total={train_losses['loss']:.6f}, "
             f"emotion={train_losses['emotion']:.6f}, "
             f"factor={train_losses['factor']:.6f}, "
-            f"mean Dev UAR={mean_uar:.6f}, best={best_uar:.6f} "
+            f"Dev UAR={dev_uar:.6f}, best={best_uar:.6f} "
             f"at epoch {best_epoch}, time={elapsed:.2f}h"
         )
     writer.close()

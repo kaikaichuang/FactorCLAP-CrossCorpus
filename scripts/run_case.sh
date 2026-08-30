@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 1 ]]; then
-    echo "Usage: $0 <e0_emotion|e1_smooth|e2_factor|e3_shuffled_factor>" >&2
+if [[ $# -ne 2 ]]; then
+    echo "Usage: $0 <msp|iemocap|crema_d> <e0_emotion|e2_factor|e3_shuffled_factor>" >&2
     exit 2
 fi
-condition=$1
+source=$1
+condition=$2
+case "$source" in
+    msp|iemocap|crema_d) ;;
+    *) echo "Invalid source: $source" >&2; exit 2 ;;
+esac
 case "$condition" in
-    e0_emotion|e1_smooth|e2_factor|e3_shuffled_factor) ;;
+    e0_emotion|e2_factor|e3_shuffled_factor) ;;
     *) echo "Invalid condition: $condition" >&2; exit 2 ;;
 esac
 
@@ -18,15 +23,15 @@ cameo_csv_root=${CAMEO_CSV_ROOT:-/work/u1667110/clap_series/dataset/CAMEO}
 cameo_audio_root=${CAMEO_AUDIO_ROOT:-/work/u1667110/EMOTION_DATASETS/CAMEO}
 initial_state=${INITIAL_STATE:-$repo_root/runs/_initial_states/smoothclapbase_seed3407.pth.tar}
 python_bin=${PYTHON_BIN:-$(command -v python)}
-run="$repo_root/runs/first_principles_pooled_seed3407/$condition"
+run="$repo_root/runs/first_principles_experts_seed3407/$source/$condition"
 
 required_files=("$initial_state" "$feature_root/READY")
-for source in msp iemocap crema_d; do
+for required_source in msp iemocap crema_d; do
     required_files+=(
-        "$split_root/$source/train.csv"
-        "$split_root/$source/development.csv"
-        "$split_root/$source/test.csv"
-        "$feature_root/${source}_train_eGeMAPSv02.csv"
+        "$split_root/$required_source/train.csv"
+        "$split_root/$required_source/development.csv"
+        "$split_root/$required_source/test.csv"
+        "$feature_root/${required_source}_train_eGeMAPSv02.csv"
     )
 done
 for required in "${required_files[@]}"; do
@@ -55,13 +60,13 @@ if [[ -f "$run/resume_latest.pth.tar" ]]; then
     resume=(--resume)
 else
     {
+        echo "source: $source"
         echo "condition: $condition"
-        echo "sources: [msp, iemocap, crema_d]"
         echo "iemocap_emotions: [angry, happy, neutral, sad, excited, frustrated]"
         echo "seed: 3407"
         echo "epochs: 30"
-        echo "selection: equal_source_dev_native_uar"
-        echo "sampling: corpus_then_emotion_uniform"
+        echo "selection: source_development_native_uar"
+        echo "sampling: emotion_uniform_within_source"
         echo "audio_view: deterministic_center_5_seconds"
         echo "main_caption: emotion_only"
         echo "audio_encoder: trainable"
@@ -72,7 +77,8 @@ else
     : > "$run/train.log"
 fi
 train_command=(
-    "$python_bin" -u train_pooled.py
+    "$python_bin" -u train_expert.py
+    --source "$source"
     --condition "$condition"
     --split-root "$split_root"
     --feature-root "$feature_root"

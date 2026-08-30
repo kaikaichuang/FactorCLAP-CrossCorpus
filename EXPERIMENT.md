@@ -5,141 +5,158 @@ Last updated: 2026-08-30
 ## Current status
 
 - [x] Research question and leakage boundary frozen.
-- [x] E0-E3 architecture and causal null defined.
-- [x] Dynamic eGeMAPS columns checked on all three source Train sets: no
-  missing or infinite values.
-- [x] Training, evaluation, resume, and NCHC scripts implemented.
-- [x] Full-utterance/random-crop mismatch identified before training.
-- [x] Deterministic center-crop and crop-matched eGeMAPS pipeline implemented.
-- [x] Local unit/static tests and real-data loading dry run passed.
-- [x] E1 and E2 real-batch AMD forward/backward smoke tests passed.
-- [x] Factor-loss scale measured on five source-Train batches; weight frozen.
-- [x] Final code review passed with no blocking logic findings.
-- [x] Initial Git commit created and GitHub remote configured.
-- [ ] NCHC initial-state/data preflight passed.
-- [ ] E0-E3 training completed.
+- [x] Pooled design rejected because source-relative factor coordinates conflict
+  under one shared head and corpus-balanced sampling duplicates small corpora.
+- [x] IEMOCAP fixed to six classes; every selected source Train class has at
+  least 300 examples.
+- [x] E0/E2/E3 source-expert architecture and matched causal null defined.
+- [x] Deterministic center crop and crop-matched eGeMAPS pipeline implemented.
+- [x] Per-source sampling, own-Development checkpoint selection, evaluation,
+  resume, and nine NCHC jobs implemented.
+- [x] Local static/unit tests and real-data loader/sampler checks passed.
+- [x] E0, E2, and E3 real-IEMOCAP one-batch AMD forward/backward checks passed.
+- [x] Seed-3407 decision rule, size-matched contingency, and E1 contingency
+  frozen before training.
+- [ ] NCHC feature/initial-state/data preflight passed for this commit.
+- [ ] Nine seed-3407 experts trained.
 - [ ] Native and Shared-4/Shared-3 inference completed.
-- [ ] Per-target analysis completed.
-- [ ] Additional seeds authorized. Do not start before interpreting seed 3407.
+- [ ] E2/E3 mechanism gate evaluated per target.
+- [ ] Complementarity analysis authorized. Only proceed if the mechanism gate
+  passes.
+- [ ] Additional seeds authorized. Only proceed if the mechanism gate passes.
 
-Previous SmoothCLAP expert, routing, fusion, and factorial-tag experiments remain
-background evidence in the old repository. They are not silently counted as
-runs of this new design.
+Previous SmoothCLAP expert, routing, fusion, and factorial-tag experiments are
+background evidence only. They are not comparable runs of this pipeline.
 
 ## Immutable first-wave contract
 
-- Sources: MSP-Podcast, IEMOCAP, CREMA-D.
-- IEMOCAP classes: angry, happy, neutral, sad, excited, frustrated. The same
-  subset is used for Train, Development selection, and Native Test.
+- Sources/experts: MSP-Podcast, IEMOCAP, CREMA-D trained separately.
+- Conditions per source: E0 emotion, E2 paired factor, E3 deranged factor.
+- IEMOCAP classes: angry, happy, neutral, sad, excited, frustrated for Train,
+  Development Native selection, and Native Test.
+- Minimum selected source Train class size: 300.
 - Seed: 3407.
 - Epochs: 30.
-- Audio encoder: trainable.
-- Text encoder: trainable.
+- Audio and text encoders: trainable.
 - Main captions: emotion-only.
-- Sampling: equal corpus probability, then equal emotion probability within
-  each corpus.
-- Audio view: deterministic center five seconds; shorter clips are used in full
-  and padded with an attention mask. Identical for E0-E3.
-- Checkpoint selection: equal mean of the three source Development Native UARs.
+- Main loss: class-aware multi-positive contrastive loss.
+- Sampling: emotion-uniform within one source; draws per epoch equal that
+  source's selected Train rows.
+- Checkpoint: own source Development Native UAR only.
+- Audio view: deterministic center five seconds; shorter clips use their full
+  audio plus attention-mask padding.
 - eGeMAPS for clips over five seconds: recomputed on the exact center crop.
-- Factor normalization: crop-matched source Train quantiles only.
-- Factor loss weight: 64, fixed before formal training from source-Train-only
-  initialization gradients (five batches; median equal-gradient ratio 248,
-  range 222–371). No Development/Test tuning.
+- Factor normalization: expert source Train quantiles only.
+- Factor loss weight: 64, fixed before formal training from five pooled
+  source-Train batches at initialization and not retuned per expert; no
+  Development/Test tuning.
+- E3: complete factor vectors deranged within the expert's true-emotion strata,
+  with zero fixed points.
 - Test: prohibited from training, normalization, tuning, and checkpoint
   selection.
 - BIIC: excluded.
-- Primary analysis: each unseen target's Shared-4 UAR separately; eNTERFACE is
-  Shared-3 and stays separate.
-- Secondary analysis: Native UAR, class recall, and collapse diagnostics.
+- Primary analysis: each external target's Shared-4 UAR separately;
+  eNTERFACE is Shared-3.
+- Secondary analysis: Native UAR, class recall, maximum predicted-class share,
+  missing predicted classes, and worst-class recall.
+
+Emotion-uniform sampling removes within-expert label-frequency imbalance. It
+does not equalize the three experts' total updates, class sets, speakers,
+recordings, or acting styles. No result may be described as purely
+paralinguistic without the matched E2/E3 evidence.
+
+## Predeclared seed-3407 mechanism gate
+
+The 13 independent external target families are TESS, RAVDESS, and the 11
+non-RAVDESS CAMEO corpora. RAVDESS official Test supplies the counted value;
+RAVDESS-full is corroboration and is not double counted.
+
+For each source expert:
+
+1. Compute E2−E3 Shared-4 UAR in percentage points for every target family
+   (Shared-3 for eNTERFACE).
+2. Count a target only if the delta is at least +2.0 pp, E2 does not newly lose
+   a predicted class relative to E3, and E2 maximum predicted-class share is
+   below 0.80.
+3. The source expert passes at 7 of 13 counted target families.
+
+The mechanism advances only if at least two of three source experts pass. For
+each passing expert, at least five counted families must be neither TESS nor
+RAVDESS. Seed 3407 is exploratory; a passing result requires additional seeds
+before a paper claim. If it fails, stop this factor/complementarity route
+rather than adding routing experiments.
+
+E2 versus E0 remains a secondary auxiliary-task comparison. It cannot replace
+E2 versus E3 because E0 differs in architecture and gradient budget.
 
 ## Run registry
 
-| ID | Condition | NCHC batch | Output path | Status |
-|---|---|---|---|---|
-| E0 | class-aware emotion-only | independent job | `runs/first_principles_pooled_seed3407/e0_emotion` | pending |
-| E1 | original SmoothCLAP, emotion-only main caption/full tags | independent job | `runs/first_principles_pooled_seed3407/e1_smooth` | pending |
-| E2 | E0 + paired continuous factor heads | independent job | `runs/first_principles_pooled_seed3407/e2_factor` | pending |
-| E3 | E0 + within-source/emotion zero-fixed-point deranged factor heads | independent job | `runs/first_principles_pooled_seed3407/e3_shuffled_factor` | pending |
-
-All four models must load the same file:
+All models load:
 
 ```text
 runs/_initial_states/smoothclapbase_seed3407.pth.tar
 ```
 
-## Execution record
+| Source | Condition | Output path | Status |
+|---|---|---|---|
+| MSP | E0 | `runs/first_principles_experts_seed3407/msp/e0_emotion` | pending |
+| MSP | E2 | `runs/first_principles_experts_seed3407/msp/e2_factor` | pending |
+| MSP | E3 | `runs/first_principles_experts_seed3407/msp/e3_shuffled_factor` | pending |
+| IEMOCAP | E0 | `runs/first_principles_experts_seed3407/iemocap/e0_emotion` | pending |
+| IEMOCAP | E2 | `runs/first_principles_experts_seed3407/iemocap/e2_factor` | pending |
+| IEMOCAP | E3 | `runs/first_principles_experts_seed3407/iemocap/e3_shuffled_factor` | pending |
+| CREMA-D | E0 | `runs/first_principles_experts_seed3407/crema_d/e0_emotion` | pending |
+| CREMA-D | E2 | `runs/first_principles_experts_seed3407/crema_d/e2_factor` | pending |
+| CREMA-D | E3 | `runs/first_principles_experts_seed3407/crema_d/e3_shuffled_factor` | pending |
 
-NCHC checkout:
+## NCHC execution record
+
+Checkout:
 
 ```text
 /work/u1667110/clap_series/FactorCLAP-CrossCorpus
 ```
 
-Commands, to be run after the Git remote is created and the repo is cloned or
-updated on NCHC:
+First submit and wait for preparation:
 
 ```bash
 cd /work/u1667110/clap_series/FactorCLAP-CrossCorpus
 sbatch scripts/nchc/prepare_features.sbatch
 ```
 
-After that job succeeds and `runs/prepared_features/center5/READY` exists:
+After `runs/prepared_features/center5/READY` exists:
 
 ```bash
-sbatch scripts/nchc/train_case.sbatch e0_emotion
-sbatch scripts/nchc/train_case.sbatch e1_smooth
-sbatch scripts/nchc/train_case.sbatch e2_factor
-sbatch scripts/nchc/train_case.sbatch e3_shuffled_factor
+sbatch scripts/nchc/train_case.sbatch msp e0_emotion
+sbatch scripts/nchc/train_case.sbatch msp e2_factor
+sbatch scripts/nchc/train_case.sbatch msp e3_shuffled_factor
+sbatch scripts/nchc/train_case.sbatch iemocap e0_emotion
+sbatch scripts/nchc/train_case.sbatch iemocap e2_factor
+sbatch scripts/nchc/train_case.sbatch iemocap e3_shuffled_factor
+sbatch scripts/nchc/train_case.sbatch crema_d e0_emotion
+sbatch scripts/nchc/train_case.sbatch crema_d e2_factor
+sbatch scripts/nchc/train_case.sbatch crema_d e3_shuffled_factor
 ```
 
-Nano5 runs at most two training jobs concurrently, so they naturally execute in
-two waves. The optional `submit_all.sh` performs only quick `sbatch` calls and
-uses `afterok` dependencies; no preparation runs in the login terminal.
+Nano5 queues jobs beyond the two concurrent-job limit. Each job trains one
+expert and then evaluates MSP, IEMOCAP, CREMA-D, RAVDESS Test, TESS, and all
+configured CAMEO targets in Native and Shared-4/Shared-3 form.
 
-Each case trains first, then evaluates:
+## Deferred work, not authorized now
 
-- MSP and CREMA-D source Test: Native and Shared-4.
-- IEMOCAP source Test: six-class Native and Shared-4 (excited merged into
-  happy; frustrated excluded from Shared-4).
-- RAVDESS official split Test: Native and Shared-4.
-- TESS full: Native and Shared-4.
-- CAMEO cafe, emns, emozionalmente, eNTERFACE, jl_corpus, mesd, nemo, oreau,
-  pavoque, RAVDESS-full, resd, and subesco: Native plus Shared-4, except
-  eNTERFACE Shared-3.
+- If the mechanism gate passes: additional E2/E3 seeds, then exploratory
+  cross-expert wrong→correct/correct→wrong and oracle-headroom comparison
+  against E3.
+- If a paralinguistic result remains: size-matched E0/E2/E3 control, with MSP
+  and CREMA-D fixed to the 4,246-example IEMOCAP scale and equal update counts.
+- If comparison with discrete SmoothCLAP tags is needed: train E1 using this
+  same crop, class-aware loss, source-specific sampling, and checkpoint
+  pipeline. Old E1 results cannot substitute.
 
-## Result tables
+## Result checklist
 
-Fill only after all four cases pass completeness checks. Never average away the
-target rows.
-
-### Shared-4 UAR (eNTERFACE Shared-3)
-
-| Target | E0 | E1 | E2 | E3 | E2-E0 | E2-E3 |
-|---|---:|---:|---:|---:|---:|---:|
-| RAVDESS Test | | | | | | |
-| TESS | | | | | | |
-| CAMEO cafe | | | | | | |
-| CAMEO emns | | | | | | |
-| CAMEO emozionalmente | | | | | | |
-| CAMEO eNTERFACE (Shared-3) | | | | | | |
-| CAMEO jl_corpus | | | | | | |
-| CAMEO mesd | | | | | | |
-| CAMEO nemo | | | | | | |
-| CAMEO oreau | | | | | | |
-| CAMEO pavoque | | | | | | |
-| CAMEO RAVDESS-full | | | | | | |
-| CAMEO resd | | | | | | |
-| CAMEO subesco | | | | | | |
-
-### Interpretation checklist
-
-- Number of external targets with E2 > E0; equal; lower.
-- Number with E2 > E3; equal; lower.
-- Median deltas, shown only beside the complete per-target table.
-- Whether any positive count disappears when TESS is removed.
-- Whether RAVDESS Test and RAVDESS-full tell the same story.
-- Per-class source of each material delta.
-- Prediction collapse or missing-class changes.
-- Only if E2 consistently beats both controls: add seeds and then reconsider
-  factor-aware routing or stronger factor subspaces.
+Before analysis, require all nine runs to contain `best.pth.tar`, `metrics.csv`,
+`train.log`, `COMPLETED`, and every configured Native/Shared prediction and
+metrics file. Report each target separately. Also report how many targets
+improve, remain within ±2.0 pp, or decline; do not replace the target table with
+an average.

@@ -2,149 +2,152 @@
 
 ## Goal
 
-The main problem is cross-corpus zero-shot SER: train only on source corpora and
-recognize emotions in unseen target corpora through audio-text alignment. The
-research question is narrower than “does adding more caption text help?”:
+The main task remains cross-corpus zero-shot SER. The narrower question is:
 
-> Can explicit, correctly paired paralinguistic dynamics shape a more
-> transferable emotion space, beyond corpus/emotion priors and generic
-> regularization?
+> Can correctly paired, continuous paralinguistic dynamics shape transferable
+> source experts and later support useful expert complementarity?
 
-The previous expert-routing work established complementarity and useful
-ensemble headroom, but did not show that paralinguistic alignment caused it.
-This repository therefore starts with representation learning and withholds
-routing until a paralinguistic mechanism survives a direct null control.
+The previous SmoothCLAP experiments showed expert complementarity and ensemble
+headroom, but did not show that paralinguistic alignment caused either. This
+repository therefore tests the representation mechanism before returning to
+routing.
 
-## Why reset the formulation
+## Why use source-specific experts
 
-Three problems make the old positive cells insufficient as causal evidence:
+The abandoned pooled design had two problems.
 
-1. Discrete captions mix emotion, gender, absolute pitch/intensity, duration,
-   and wording augmentation in one sentence.
-2. Source dataset properties can make those attributes proxies for corpus or
-   emotion priors.
-3. Standard diagonal CLIP loss treats another utterance with the same emotion
-   caption as a negative. With emotion-only text, that contradicts the desired
-   class geometry.
+First, factor quantiles are necessarily fitted within each source Train split.
+A pitch-variation rank of 0.8 in MSP and 0.8 in CREMA-D therefore has different
+absolute acoustics. One pooled factor head would have to infer corpus identity
+before reproducing the appropriate within-corpus rank. That can encourage the
+exact corpus information the experiment is trying not to mistake for a
+transferable paralinguistic mechanism.
 
-The new baseline uses a class-aware multi-positive contrastive target: every
-same-emotion item in the batch is positive. This is shared by E0, E2, and E3.
-It is a deliberate first-principles correction, not an extra ablation.
+Second, equal-corpus pooled sampling repeated IEMOCAP and CREMA-D roughly in
+proportion to MSP's size. Source-specific epochs instead draw exactly the size
+of that source Train split:
 
-## Factors
+| Source | Classes | Train rows/draws per epoch | Smallest class |
+|---|---:|---:|---:|
+| MSP-Podcast | 9 | 68,328 | 1,120 |
+| IEMOCAP | 6 | 4,246 | 387 |
+| CREMA-D | 6 | 5,316 | 776 |
 
-Only continuous within-utterance dynamics are used in the first experiment.
-Each value is converted to a quantile using that source corpus's **Train split
-only**, making scales comparable without fitting on Development or Test.
+Within each expert, emotion-uniform sampling removes the training-frequency
+prior that dominated the old analysis. It does **not** equalize total updates,
+class inventories, speakers, acting style, or recording conditions. Those
+remaining differences are limitations and possible sources of expert
+specialization, not evidence of a paralinguistic cause.
 
-- Pitch: normalized F0 variation, percentile range, rising slope, falling slope.
+## Common formulation
+
+All models use a class-aware multi-positive contrastive target: every item with
+the same emotion is a positive. This avoids treating duplicate emotion-only
+captions as negatives.
+
+All models use the same deterministic center-five-second audio view. Shorter
+utterances are used in full and padded with an attention mask. For longer
+utterances, eGeMAPS is recomputed on exactly that interval. This removes the
+old mismatch between random audio crops and full-utterance acoustic targets.
+
+Only continuous within-utterance dynamics are included initially:
+
+- Pitch: normalized F0 variation, percentile range, rising slope, falling
+  slope.
 - Energy: normalized loudness variation, percentile range, rising slope,
   falling slope.
-- Rhythm: voiced segments per second, mean voiced length, mean unvoiced length.
+- Rhythm: voiced segments per second, mean voiced length, mean unvoiced
+  length.
 
-The first experiment excludes gender, VAD labels, absolute mean F0, absolute
-sound level, and raw duration. These are either unavailable across corpora or
-especially likely to encode speaker, recording, or corpus identity. Spectral
-flux is deferred to avoid broadening the initial claim.
+Gender, VAD labels, absolute mean F0, absolute sound level, and raw duration
+are excluded because they are especially likely to encode speaker, recording,
+or corpus identity. Every factor is converted to a quantile fitted only on the
+expert's own source Train split.
 
+## Three conditions
 
-All conditions use a deterministic center five-second view; shorter utterances
-are used in full and padded with an attention mask. This replaces inherited
-random cropping because 51.6% of MSP and 32.9% of IEMOCAP Train utterances
-exceed five seconds. For every longer utterance, eGeMAPS is recomputed on the
-exact center interval. E0-E3 therefore receive identical audio views, E1 tags
-describe its observed crop, and E2/E3 targets describe that same crop. The
-first pilot deliberately gives up random-crop augmentation rather than accept
-unmeasured supervision noise or introduce a multi-window pipeline.
-
-## Model and four conditions
-
-All conditions start from one seed-3407 SmoothCLAP initial state, use trainable
-main audio and text encoders, train for 30 epochs, and sample source corpus
-uniformly then emotion uniformly within source.
+All conditions start from the same seed-3407 initialization and train both
+main encoders for 30 epochs.
 
 | ID | Main alignment | Paralinguistic supervision |
 |---|---|---|
 | E0 | Class-aware emotion-only CLAP | None |
-| E1 | Original SmoothCLAP soft target; emotion-only main caption | Full canonical text tags plus frozen local audio similarity |
-| E2 | Same as E0 | Three linear heads regress the correctly paired continuous factor ranks |
-| E3 | Same as E0 | Same heads and targets as E2, but whole target vectors deranged within source × true emotion with zero fixed points |
+| E2 | Same as E0 | Three linear heads regress correctly paired continuous factor ranks |
+| E3 | Same as E0 | Same heads and targets, but complete target vectors are deranged within true emotion with zero fixed points |
 
-The E2/E3 heads operate on the pooled audio-encoder representation. Their three
-losses are averaged and added to the emotion loss with fixed weight 64. They
-are discarded at inference, so zero-shot prediction remains audio-versus-label
-cosine similarity.
+The factor heads are training-only. Their three Smooth-L1 losses are averaged
+and added with fixed weight 64. This common weight was selected before formal
+training from five pooled source-Train batches at initialization and is not
+retuned per expert. E2 and E3 have identical architecture, supervision
+marginals, and gradient budget; only correct utterance-to-factor pairing
+differs.
 
-The weight was frozen before formal training using five seed-3407 pooled Train
-batches at initialization. The median emotion-to-factor gradient-norm ratio at
-the shared audio representation was 248 (range 222–371); weight 64 gives the
-auxiliary task roughly one quarter of the emotion gradient at initialization.
-No Development or Test result was used to choose it.
-
-Derangement preserves each source/emotion factor distribution and all
-within-vector correlations while ensuring that no utterance keeps its own
-factor vector. It destroys only the utterance-level pairing.
 Therefore:
 
-- E2 > E0 but E2 ≈ E3 indicates generic multitask regularization or
-  source/emotion-distribution effects, not useful utterance-level alignment.
-- E2 > E0 and E2 > E3 supports a contribution from correctly paired continuous
-  factors.
-- E1 > E0 but E2 does not win suggests the original relational/text mechanism,
-  not the proposed continuous factor route.
-- E2 ≤ E0 is a stop signal for factor-based routing in this form.
+- E2 > E3 supports a contribution from correct utterance-level factor pairing.
+- E2 > E0 but E2 ≈ E3 supports only generic auxiliary-task regularization or
+  emotion-conditional factor distributions.
+- E2 ≤ E3 is a stop signal for this factor mechanism.
 
-This is evidence about this factor set and architecture, not proof that every
-paralinguistic feature causes generalization.
+E2 versus E3 is the primary causal comparison. E0 is secondary and must not
+replace the matched null.
 
-## Evaluation contract
+## Predeclared first-seed decision
 
-Training sources are MSP-Podcast, IEMOCAP, and CREMA-D. IEMOCAP uses only
-angry, happy, neutral, sad, excited, and frustrated; this same six-class subset
-defines its Train, Development Native UAR, and Native Test. Checkpoint selection
-is the equal-weight mean of the three source Development Native UARs. Test data
-never participates in optimization, normalization, hyperparameter choice, or
-checkpoint selection.
+Use 13 external target families: TESS, RAVDESS, and the 11 non-RAVDESS CAMEO
+corpora. RAVDESS official Test is primary; RAVDESS-full is corroboration and is
+not counted as a second independent family. Shared-4 is primary, except
+eNTERFACE Shared-3.
 
-Report each target separately:
+A source expert passes only if E2−E3 is at least +2.0 UAR percentage points on
+at least 7 of 13 target families. A target does not count if E2 newly loses a
+predicted class relative to E3 or its maximum predicted-class share is at least
+0.80. The mechanism advances only if at least two of the three source experts
+pass. For each passing expert, at least five counted families must be neither
+TESS nor RAVDESS.
 
-- Primary: Shared-4 UAR on unseen corpora, with eNTERFACE reported as Shared-3
-  rather than silently mixed into Shared-4.
-- Secondary: Native UAR, per-class recall, maximum predicted-class share,
-  missing classes, and worst-class recall.
-- In-domain source Test results are diagnostics, not cross-corpus evidence.
-- RAVDESS split Test and CAMEO RAVDESS-full must be labeled separately because
-  they overlap in corpus identity and are not independent targets.
-- Do not replace the target table with one average. Summaries may state how
-  many targets improve or decline and give the median delta, alongside all
-  per-target values.
+This is a direction screen, not publication evidence. Any passing result must
+be repeated with additional seeds before a causal claim. If E2 ≈ E3, stop the
+factor/complementarity route instead of adding routers or small ablations.
 
-The first seed is a direction screen. A credible positive result must be
-distributed across several genuinely different targets, not driven only by
-TESS or one corpus family, and must not trade improvement for prediction
-collapse. Only after that result should the winning comparison be repeated
-with additional seeds.
+Expert complementarity is exploratory at seed 3407. Only after the E2/E3 gate
+passes should we compare E2 experts' per-target wrong→correct and correct→wrong
+transitions or oracle headroom against E3. A few points of extra oracle
+headroom at one seed are not evidence of mechanism.
+
+## Deferred controls
+
+- **Size matched:** if the mechanism passes, downsample MSP and CREMA-D to the
+  fixed 4,246-row IEMOCAP scale and equalize update counts for E0/E2/E3. This
+  tests whether the result survives source-data volume differences.
+- **E1 SmoothCLAP:** if E2 wins and the paper needs a comparison with discrete
+  tag supervision, train E1 in this exact new pipeline. Old SmoothCLAP results
+  used different crops, loss, sampling, and tags, so they are not comparable.
+- **Additional seeds:** authorize only after the mechanism gate, focusing on
+  E2/E3 and any sources that pass.
+
+## Evaluation boundaries
+
+Each checkpoint uses only its own source Development Native UAR. Test data is
+never used for training, factor normalization, tuning, or checkpoint
+selection. Report every target separately; do not hide target dependence in a
+single average.
+
+Primary reporting is per-target Shared-4 UAR (Shared-3 for eNTERFACE).
+Secondary reporting includes Native UAR, per-class recall, maximum
+predicted-class share, missing classes, and worst-class recall. Source Test is
+in-domain diagnosis, not cross-corpus evidence. BIIC remains excluded.
 
 ## Relation to prior work
 
-- [SmoothCLAP](https://arxiv.org/abs/2601.12591) motivates relational A2A/T2T
-  soft targets, but does not isolate utterance-level paralinguistic causality
-  for this cross-corpus setting.
-- [ParaMETA](https://ojs.aaai.org/index.php/AAAI/article/view/40505) supports
-  task-specific subspaces to reduce interference among paralinguistic tasks.
-  Separate factor heads are the minimal version of that principle here.
-- [EmotionRankCLAP](https://arxiv.org/abs/2505.23732) shows that continuous or
-  ordinal affect supervision can shape CLAP representations, but its VA
-  setting and task are not a direct cross-corpus SER answer.
-- [CLSP](https://arxiv.org/abs/2601.03065) uses multi-granular supervision at a
-  much larger data scale; its results do not establish that bundled captions
-  are sufficient in this small supervised regime.
-- [ParaSpeechCLAP](https://arxiv.org/abs/2603.28737) supports specialized
-  paralinguistic modeling, while leaving the present zero-shot SER question
-  open.
+- [SmoothCLAP](https://arxiv.org/abs/2601.12591) motivates relational soft
+  targets but does not isolate utterance-level paralinguistic causality here.
+- [ParaMETA](https://ojs.aaai.org/index.php/AAAI/article/view/40505) motivates
+  task-specific paralinguistic subspaces; separate factor heads are the minimal
+  version tested here.
+- [EmotionRankCLAP](https://arxiv.org/abs/2505.23732) supports continuous or
+  ordinal affect supervision, but not this cross-corpus causal question.
+- [CLSP](https://arxiv.org/abs/2601.03065) motivates multi-granular supervision
+  at larger scale; it does not establish bundled captions as the mechanism.
 - [CLEP-DG](https://www.isca-archive.org/interspeech_2025/shi25_interspeech.html)
-  is a relevant domain-generalization comparison if the first experiment
-  passes, not a component added to this pilot.
-
-The ICASSP 2027 paper deadline is listed as 16 September 2026 on the
-[official call for papers](https://2027.ieeeicassp.org/call-for-papers/).
+  is a future domain-generalization comparison only if this screen passes.

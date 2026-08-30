@@ -6,20 +6,19 @@ from unittest.mock import patch
 
 import yaml
 
-from factor_data import SOURCES
-from train_pooled import REPO_ROOT, experiment_contract
+from train_expert import REPO_ROOT, experiment_contract
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class ExperimentContractTests(unittest.TestCase):
-    def test_training_never_references_test_split(self):
-        source = (ROOT / "train_pooled.py").read_text()
+    def test_training_selects_only_own_development_split(self):
+        source = (ROOT / "train_expert.py").read_text()
         self.assertNotIn('"test.csv"', source)
         self.assertNotIn("/test/", source)
-        self.assertIn("mean_uar", source)
-        self.assertIn("dev_csvs", source)
+        self.assertIn('dev_uar = dev["UAR"]', source)
+        self.assertNotIn("mean_uar", source)
 
     def test_iemocap_native_evaluation_is_six_class(self):
         runner = (ROOT / "scripts/run_case.sh").read_text()
@@ -27,14 +26,13 @@ class ExperimentContractTests(unittest.TestCase):
             "native_args=(--emotions angry happy neutral sad excited frustrated)",
             runner,
         )
-        trainer = (ROOT / "train_pooled.py").read_text()
-        self.assertIn("emotions=emotions_by_source[source]", trainer)
+        trainer = (ROOT / "train_expert.py").read_text()
+        self.assertIn("emotions=emotions", trainer)
 
-    def test_all_conditions_and_cameo_are_scheduled(self):
+    def test_three_conditions_and_all_targets_are_scheduled(self):
         runner = (ROOT / "scripts/run_case.sh").read_text()
         for condition in (
             "e0_emotion",
-            "e1_smooth",
             "e2_factor",
             "e3_shuffled_factor",
         ):
@@ -59,26 +57,24 @@ class ExperimentContractTests(unittest.TestCase):
 
     def test_training_is_blocked_until_full_preflight(self):
         runner = (ROOT / "scripts/run_case.sh").read_text()
-        preparation = (
-            ROOT / "scripts/nchc/prepare_features.sbatch"
-        ).read_text()
+        preparation = (ROOT / "scripts/nchc/prepare_features.sbatch").read_text()
         self.assertIn('"$feature_root/READY"', runner)
         self.assertIn("scripts/nchc/prepare_once.sh", preparation)
         self.assertIn("preflight_inputs.py", preparation)
         submitter = (ROOT / "scripts/nchc/submit_all.sh").read_text()
         self.assertNotIn("bash scripts/nchc/prepare_once.sh", submitter)
 
-    def test_each_condition_gets_an_independent_slurm_job(self):
+    def test_nine_source_condition_jobs_are_defined(self):
         submitter = (ROOT / "scripts/nchc/submit_all.sh").read_text()
         self.assertIn("scripts/nchc/train_case.sbatch", submitter)
         self.assertIn('dependency="afterok:$feature_job"', submitter)
-        for condition in (
-            "e0_emotion",
-            "e1_smooth",
-            "e2_factor",
-            "e3_shuffled_factor",
-        ):
-            self.assertIn(condition, submitter)
+        self.assertIn("sources=(msp iemocap crema_d)", submitter)
+        self.assertIn(
+            "conditions=(e0_emotion e2_factor e3_shuffled_factor)", submitter
+        )
+        runner = (ROOT / "scripts/run_case.sh").read_text()
+        self.assertIn('for required_source in msp iemocap crema_d', runner)
+        self.assertIn('--source "$source"', runner)
 
     def test_factor_checkpoint_loader_is_registered(self):
         source = (ROOT / "eval_csv.py").read_text()
@@ -92,31 +88,30 @@ class ExperimentContractTests(unittest.TestCase):
             feature_root.mkdir()
             initial_state = root / "initial.pth.tar"
             initial_state.write_bytes(b"shared initial state")
-            train_csvs = {}
-            dev_csvs = {}
-            for source in SOURCES:
-                train_csvs[source] = str(root / f"{source}_train.csv")
-                dev_csvs[source] = str(root / f"{source}_development.csv")
-                Path(train_csvs[source]).write_text("sample_id\\ntrain\\n")
-                Path(dev_csvs[source]).write_text("sample_id\\ndev\\n")
-                (feature_root / f"{source}_train_eGeMAPSv02.csv").write_text(
-                    "sample_id,feature\\ntrain,0.1\\n"
-                )
+            train_csv = root / "msp_train.csv"
+            dev_csv = root / "msp_development.csv"
+            train_csv.write_text("sample_id\ntrain\n")
+            dev_csv.write_text("sample_id\ndev\n")
+            feature_csv = feature_root / "msp_train_eGeMAPSv02.csv"
+            feature_csv.write_text("sample_id,feature\ntrain,0.1\n")
             with open(REPO_ROOT / "configs/config.yaml") as file:
                 config = yaml.safe_load(file)
             args = SimpleNamespace(
+                source="msp",
                 condition="e2_factor",
                 factor_weight=64.0,
                 feature_root=str(feature_root),
                 initial_state=str(initial_state),
             )
-            with patch("train_pooled.subprocess.check_output", return_value="commit\\n"):
-                saved = experiment_contract(args, config, train_csvs, dev_csvs)
-                (feature_root / "msp_train_eGeMAPSv02.csv").write_text(
-                    "sample_id,feature\\ntrain,0.2\\n"
+            emotions = ["angry", "happy"]
+            with patch("train_expert.subprocess.check_output", return_value="commit\n"):
+                saved = experiment_contract(
+                    args, config, emotions, str(train_csv), str(dev_csv)
                 )
-                current = experiment_contract(args, config, train_csvs, dev_csvs)
-            self.assertNotEqual(saved, current)
+                feature_csv.write_text("sample_id,feature\ntrain,0.2\n")
+                current = experiment_contract(
+                    args, config, emotions, str(train_csv), str(dev_csv)
+                )
             self.assertNotEqual(
                 saved["input_sha256"]["msp_features"],
                 current["input_sha256"]["msp_features"],

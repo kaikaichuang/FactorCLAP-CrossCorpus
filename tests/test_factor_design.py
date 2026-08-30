@@ -8,11 +8,11 @@ from dataset import TAG_FEATURE_COLUMNS, center_crop_or_pad
 from factor_data import (
     FACTOR_COLUMNS,
     FACTOR_GROUPS,
-    PooledTrainingDataset,
+    ExpertTrainingDataset,
     SOURCE_EMOTIONS,
     SOURCES,
     TARGET_COLUMNS,
-    corpus_emotion_sampler,
+    emotion_balanced_sampler,
     shuffle_targets_within_source_emotion,
 )
 from losses import class_aware_clap_loss, grouped_factor_loss
@@ -51,7 +51,7 @@ class FactorDesignTests(unittest.TestCase):
         row = {"emotion": "angry", "wav_name": "unused.wav", "gender": "unknown"}
         row.update({column: 0.5 for column in TARGET_COLUMNS})
         row.update({f"{column}.quantile": 0.5 for column in TAG_FEATURE_COLUMNS})
-        dataset = PooledTrainingDataset(pd.DataFrame([row]), True)
+        dataset = ExpertTrainingDataset(pd.DataFrame([row]), True)
         dataset.df.loc[0, "audio_path"] = "unused.wav"
         with unittest.mock.patch("dataset.load_waveform", return_value=np.zeros(8)):
             sample = dataset[0]
@@ -87,19 +87,18 @@ class FactorDesignTests(unittest.TestCase):
                 f"fixed target row remains in stratum {key}",
             )
 
-    def test_sampler_has_equal_source_then_emotion_mass(self):
+    def test_sampler_has_equal_emotion_mass_and_source_sized_epoch(self):
         frame = pd.DataFrame(
             {
-                "_source_corpus": ["a", "a", "a", "b", "b", "b", "b"],
-                "emotion": ["x", "x", "y", "x", "y", "y", "y"],
+                "_source_corpus": ["a", "a", "a", "a", "a"],
+                "emotion": ["x", "x", "y", "y", "y"],
             }
         )
-        sampler = corpus_emotion_sampler(frame)
+        sampler = emotion_balanced_sampler(frame)
         frame["weight"] = sampler.weights.numpy()
-        masses = frame.groupby(["_source_corpus", "emotion"])["weight"].sum()
-        np.testing.assert_allclose(masses.to_numpy(), np.full(4, 0.5))
-        source_mass = masses.groupby(level=0).sum()
-        np.testing.assert_allclose(source_mass.to_numpy(), np.ones(2))
+        masses = frame.groupby("emotion")["weight"].sum()
+        np.testing.assert_allclose(masses.to_numpy(), np.full(2, 0.5))
+        self.assertEqual(sampler.num_samples, len(frame))
 
     def test_class_aware_loss_is_invariant_within_emotion(self):
         text = torch.nn.functional.normalize(

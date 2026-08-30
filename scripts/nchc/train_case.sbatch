@@ -16,9 +16,9 @@ ml load miniconda3/24.11.1
 conda activate clap
 set -euo pipefail
 
-if [[ $# -ne 1 ]]; then
-    echo "Usage: sbatch $0 <condition>" >&2
+if [[ $# -ne 2 ]]; then
+    echo "Usage: sbatch $0 <source> <condition>" >&2
     exit 2
 fi
 cd /work/u1667110/clap_series/FactorCLAP-CrossCorpus
-bash scripts/run_case.sh "$1"
+bash scripts/run_case.sh "$1" "$2"

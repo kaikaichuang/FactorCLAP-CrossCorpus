@@ -1,49 +1,46 @@
 # FactorCLAP-CrossCorpus
 
 First-principles experiments for cross-corpus zero-shot speech emotion
-recognition (SER). The repository tests whether correctly paired,
-utterance-level paralinguistic dynamics improve an emotion-aligned CLAP model,
-rather than treating corpus identity or discrete caption tags as the mechanism.
+recognition. The first wave tests whether correctly paired continuous
+paralinguistic supervision improves source-specific emotion experts.
 
-The first experiment is intentionally small: four pooled models, one seed, and
-one controlled causal null. It does not include routing.
+## First wave
 
-## Experiment in plain language
+Train nine models: three source corpora × three conditions. Every model starts
+from the same seed-3407 initialization, trains its audio and text encoders for
+30 epochs, and selects its checkpoint using only its own source Development
+Native UAR.
 
-All models train on MSP-Podcast, IEMOCAP, and CREMA-D with balanced sampling.
-At inference, every model still compares an audio embedding with text emotion
-labels such as `angry` or `sad`.
+- **E0 emotion:** class-aware emotion-only CLAP.
+- **E2 factor:** E0 plus training-only heads for correctly paired continuous
+  pitch, energy, and rhythm dynamics.
+- **E3 deranged factor:** the same model, loss, and factor distributions as E2,
+  but complete factor vectors are reassigned within source × true emotion with
+  zero fixed points.
 
-IEMOCAP is defined as six classes: angry, happy, neutral, sad, excited, and
-frustrated. Its disgust, fear, other, and surprise rows are excluded from
-Train, Development checkpoint selection, and Native Test evaluation.
+E2 versus E3 is the causal comparison. E2 versus E0 only tests whether adding
+the auxiliary task is useful. IEMOCAP is fixed to angry, happy, neutral, sad,
+excited, and frustrated; every selected Train class has at least 300 examples.
 
-- **E0 emotion:** emotion-only, class-aware contrastive baseline.
-- **E1 smooth:** original SmoothCLAP soft alignment with full canonical
-  paralinguistic tags, but emotion-only main captions.
-- **E2 factor:** E0 plus separate linear heads that predict continuous,
-  source-normalized pitch, energy, and rhythm dynamics during training.
-- **E3 deranged factor:** exactly E2, except the complete factor vector is
-  reassigned within each source and true-emotion stratum with zero fixed points.
+Each expert samples emotions uniformly, with draws per epoch equal to that
+source's Train size. This removes label-frequency imbalance and the old pooled
+corpus oversampling, but does not remove corpus-size, class-inventory, speaker,
+or recording differences.
 
-The factor heads are training-only. E2 versus E3 asks whether the correct
-utterance-to-prosody correspondence matters; E2 versus E0 asks whether the
-auxiliary task helps at all.
+## Repository files
 
-## Files
-
-- [RESEARCH.md](RESEARCH.md): hypotheses, design rationale, literature, and
+- [RESEARCH.md](RESEARCH.md): hypotheses, rationale, decision rules, and
   interpretation boundaries.
 - [EXPERIMENT.md](EXPERIMENT.md): immutable contract, run registry, commands,
-  status, and eventually results.
-- `train_pooled.py`: pooled E0-E3 trainer.
-- `scripts/run_case.sh`: one condition, followed by Native and Shared-4
-  inference on all configured targets.
-- `prepare_crop_features.py`: exact center-five-second eGeMAPS preparation.
-- `scripts/nchc/`: dependency-safe NCHC preparation and training jobs.
+  status, and results.
+- `train_expert.py`: one source/condition training job.
+- `prepare_crop_features.py`: center-five-second eGeMAPS preparation.
+- `scripts/run_case.sh`: training followed by all Native and Shared-4/Shared-3
+  evaluations, including CAMEO.
+- `scripts/nchc/`: NCHC Slurm preparation and training scripts.
 
-These three Markdown files are deliberate: only `EXPERIMENT.md` is a live
-experiment log, so status is not duplicated across documents.
+The three Markdown files have separate roles; status is maintained only in
+`EXPERIMENT.md`.
 
 ## NCHC execution
 
@@ -53,53 +50,44 @@ Expected checkout:
 /work/u1667110/clap_series/FactorCLAP-CrossCorpus
 ```
 
-Expected datasets are the existing CrossCorpus and CAMEO folders under
-`/work/u1667110/clap_series/dataset`. The preparation script reuses the
-seed-3407 initial state from SmoothCLAP-CrossCorpus when present; otherwise it
-creates the same architecture from the cached pretrained models.
-
-All four conditions use the same deterministic center five seconds. For Train
-utterances longer than five seconds, eGeMAPS is recomputed on precisely that
-interval before either SmoothCLAP tags or factor targets are built.
-
-Submit preparation first. All initialization, tests, crop-feature extraction,
-and input preflight execute inside this Slurm job, not in the login terminal:
+Preparation, tests, initial-state validation, and center-crop feature creation
+must run inside Slurm:
 
 ```bash
 cd /work/u1667110/clap_series/FactorCLAP-CrossCorpus
 sbatch scripts/nchc/prepare_features.sbatch
 ```
 
-After that job exits successfully and
-`runs/prepared_features/center5/READY` exists, submit the four models:
+After that job succeeds and `runs/prepared_features/center5/READY` exists,
+submit the nine independent jobs. Submitting them is quick; Slurm queues them
+when only two H100 jobs may run concurrently.
 
 ```bash
-sbatch scripts/nchc/train_case.sbatch e0_emotion
-sbatch scripts/nchc/train_case.sbatch e1_smooth
-sbatch scripts/nchc/train_case.sbatch e2_factor
-sbatch scripts/nchc/train_case.sbatch e3_shuffled_factor
+sbatch scripts/nchc/train_case.sbatch msp e0_emotion
+sbatch scripts/nchc/train_case.sbatch msp e2_factor
+sbatch scripts/nchc/train_case.sbatch msp e3_shuffled_factor
+sbatch scripts/nchc/train_case.sbatch iemocap e0_emotion
+sbatch scripts/nchc/train_case.sbatch iemocap e2_factor
+sbatch scripts/nchc/train_case.sbatch iemocap e3_shuffled_factor
+sbatch scripts/nchc/train_case.sbatch crema_d e0_emotion
+sbatch scripts/nchc/train_case.sbatch crema_d e2_factor
+sbatch scripts/nchc/train_case.sbatch crema_d e3_shuffled_factor
 ```
 
-Nano5 permits two concurrent jobs per user, so these run in two waves. The
-preprocessing job requests one H100 because Nano5 partitions are GPU partitions,
-although extraction itself is CPU-bound. Each model resumes independently from
-`resume_latest.pth.tar` and performs all inference after training.
+`bash scripts/nchc/submit_all.sh` is an optional equivalent that only issues
+`sbatch` commands and returns; it does not run training in the login terminal.
 
-Alternatively, `bash scripts/nchc/submit_all.sh` only issues `sbatch` calls and
-returns immediately; it no longer runs preparation in the login terminal.
-
-Results are written to:
+Each job resumes from `resume_latest.pth.tar`, then runs MSP, IEMOCAP, CREMA-D,
+RAVDESS, TESS, and all configured CAMEO inference. Results are written to:
 
 ```text
-runs/first_principles_pooled_seed3407/<condition>/
+runs/first_principles_experts_seed3407/<source>/<condition>/
 ```
 
-Copy that complete directory back to the same repository path on AMD for
-analysis. Training and checkpoint selection never read Test labels.
+Copy that complete directory back to the same path on AMD for analysis. Test
+data never participates in training or checkpoint selection.
 
 ## Local checks
-
-Use the existing `clap` environment:
 
 ```bash
 cd /homes/kevin/clap_series/FactorCLAP-CrossCorpus

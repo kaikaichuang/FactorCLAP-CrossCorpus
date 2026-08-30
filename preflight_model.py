@@ -5,7 +5,7 @@ import torch
 import yaml
 from transformers import AutoTokenizer
 
-from train_pooled import (
+from train_expert import (
     REPO_ROOT,
     build_model,
     load_shared_initial_state,
@@ -37,7 +37,7 @@ def main():
         raise ValueError("Tokenizer preflight failed")
 
     device = torch.device(args.device)
-    for condition in ("e0_emotion", "e1_smooth", "e2_factor"):
+    for condition in ("e0_emotion", "e2_factor"):
         model = build_model(condition, config).to(device)
         load_shared_initial_state(
             model,

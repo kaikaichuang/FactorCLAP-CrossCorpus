@@ -57,6 +57,7 @@ else
     {
         echo "condition: $condition"
         echo "sources: [msp, iemocap, crema_d]"
+        echo "iemocap_emotions: [angry, happy, neutral, sad, excited, frustrated]"
         echo "seed: 3407"
         echo "epochs: 30"
         echo "selection: equal_source_dev_native_uar"
@@ -109,7 +110,11 @@ for target in msp iemocap crema_d ravdess tess; do
     split=test
     [[ "$target" == tess ]] && split=full
     csv="$split_root/$target/$split.csv"
-    evaluate_one "$csv" "$run/test/$target/native" /
+    native_args=()
+    if [[ "$target" == iemocap ]]; then
+        native_args=(--emotions angry happy neutral sad excited frustrated)
+    fi
+    evaluate_one "$csv" "$run/test/$target/native" / "${native_args[@]}"
     shared_args=(--emotions angry happy neutral sad)
     [[ "$target" == iemocap ]] && shared_args+=(--merge-excited-to-happy)
     evaluate_one "$csv" "$run/test/$target/shared4" / "${shared_args[@]}"

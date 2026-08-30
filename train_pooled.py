@@ -18,7 +18,12 @@ from transformers import logging as transformers_logging
 
 from dataset import AUDIO_SAMPLES, SAMPLE_RATE
 from evaluate import evaluate_csv
-from factor_data import FACTOR_GROUPS, PooledTrainingDataset, SOURCES
+from factor_data import (
+    FACTOR_GROUPS,
+    PooledTrainingDataset,
+    SOURCE_EMOTIONS,
+    SOURCES,
+)
 from factor_data import load_pooled_training_data
 from factor_model import FactorCLAP
 from integrity import file_sha256
@@ -144,6 +149,7 @@ def experiment_contract(
             else "none"
         ),
         "sampling": "corpus_then_emotion_uniform",
+        "source_emotions": SOURCE_EMOTIONS,
         "audio_view": {
             "selection": "center",
             "samples": AUDIO_SAMPLES,
@@ -306,6 +312,7 @@ def evaluate_development(
             csv_path=dev_csvs[source],
             audio_root="/",
             candidate_emotions=emotions_by_source[source],
+            emotions=emotions_by_source[source],
             device=device,
             batch_size=BATCH_SIZE,
             output_csv=os.path.join(output_root, f"dev_latest_{source}.csv"),

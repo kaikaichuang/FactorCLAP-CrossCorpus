@@ -29,6 +29,8 @@ runs of this new design.
 ## Immutable first-wave contract
 
 - Sources: MSP-Podcast, IEMOCAP, CREMA-D.
+- IEMOCAP classes: angry, happy, neutral, sad, excited, frustrated. The same
+  subset is used for Train, Development selection, and Native Test.
 - Seed: 3407.
 - Epochs: 30.
 - Audio encoder: trainable.
@@ -89,7 +91,9 @@ allocation.
 
 Each case trains first, then evaluates:
 
-- MSP, IEMOCAP, CREMA-D source Test: Native and Shared-4.
+- MSP and CREMA-D source Test: Native and Shared-4.
+- IEMOCAP source Test: six-class Native and Shared-4 (excited merged into
+  happy; frustrated excluded from Shared-4).
 - RAVDESS official split Test: Native and Shared-4.
 - TESS full: Native and Shared-4.
 - CAMEO cafe, emns, emozionalmente, eNTERFACE, jl_corpus, mesd, nemo, oreau,

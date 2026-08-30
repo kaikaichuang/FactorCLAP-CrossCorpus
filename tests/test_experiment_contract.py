@@ -21,6 +21,15 @@ class ExperimentContractTests(unittest.TestCase):
         self.assertIn("mean_uar", source)
         self.assertIn("dev_csvs", source)
 
+    def test_iemocap_native_evaluation_is_six_class(self):
+        runner = (ROOT / "scripts/run_case.sh").read_text()
+        self.assertIn(
+            "native_args=(--emotions angry happy neutral sad excited frustrated)",
+            runner,
+        )
+        trainer = (ROOT / "train_pooled.py").read_text()
+        self.assertIn("emotions=emotions_by_source[source]", trainer)
+
     def test_all_conditions_and_cameo_are_scheduled(self):
         runner = (ROOT / "scripts/run_case.sh").read_text()
         for condition in (

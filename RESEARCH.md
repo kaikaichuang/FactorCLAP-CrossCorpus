@@ -99,9 +99,11 @@ paralinguistic feature causes generalization.
 
 ## Evaluation contract
 
-Training sources are MSP-Podcast, IEMOCAP, and CREMA-D. Checkpoint selection is
-the equal-weight mean of their three Development Native UARs. Test data never
-participates in optimization, normalization, hyperparameter choice, or
+Training sources are MSP-Podcast, IEMOCAP, and CREMA-D. IEMOCAP uses only
+angry, happy, neutral, sad, excited, and frustrated; this same six-class subset
+defines its Train, Development Native UAR, and Native Test. Checkpoint selection
+is the equal-weight mean of the three source Development Native UARs. Test data
+never participates in optimization, normalization, hyperparameter choice, or
 checkpoint selection.
 
 Report each target separately:

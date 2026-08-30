@@ -14,6 +14,10 @@ All models train on MSP-Podcast, IEMOCAP, and CREMA-D with balanced sampling.
 At inference, every model still compares an audio embedding with text emotion
 labels such as `angry` or `sad`.
 
+IEMOCAP is defined as six classes: angry, happy, neutral, sad, excited, and
+frustrated. Its disgust, fear, other, and surprise rows are excluded from
+Train, Development checkpoint selection, and Native Test evaluation.
+
 - **E0 emotion:** emotion-only, class-aware contrastive baseline.
 - **E1 smooth:** original SmoothCLAP soft alignment with full canonical
   paralinguistic tags, but emotion-only main captions.

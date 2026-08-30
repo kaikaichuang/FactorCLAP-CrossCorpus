@@ -9,6 +9,7 @@ from factor_data import (
     FACTOR_COLUMNS,
     FACTOR_GROUPS,
     PooledTrainingDataset,
+    SOURCE_EMOTIONS,
     SOURCES,
     TARGET_COLUMNS,
     corpus_emotion_sampler,
@@ -20,6 +21,10 @@ from prepare_crop_features import center_intervals
 
 class FactorDesignTests(unittest.TestCase):
     def test_scope_is_three_sources_and_dynamic_factors(self):
+        self.assertEqual(
+            SOURCE_EMOTIONS["iemocap"],
+            ("angry", "happy", "neutral", "sad", "excited", "frustrated"),
+        )
         self.assertEqual(SOURCES, ("msp", "iemocap", "crema_d"))
         self.assertEqual(set(FACTOR_GROUPS), {"pitch", "energy", "rhythm"})
         forbidden = {"gender", "Duration", "equivalentSoundLevel_dBp", "EmoAct"}

@@ -10,6 +10,9 @@ from dataset import TemplateDataset, load_training_frame
 
 
 SOURCES = ("msp", "iemocap", "crema_d")
+SOURCE_EMOTIONS = {
+    "iemocap": ("angry", "happy", "neutral", "sad", "excited", "frustrated"),
+}
 FACTOR_GROUPS = {
     "pitch": (
         "F0semitoneFrom27.5Hz_sma3nz_stddevNorm",
@@ -130,6 +133,7 @@ def load_pooled_training_data(
             train_csv,
             feature_csv,
             "/",
+            emotions=SOURCE_EMOTIONS.get(source),
             include_dimensions=False,
         )
         frame["_source_corpus"] = source
@@ -140,11 +144,21 @@ def load_pooled_training_data(
             .astype(str)
             .str.lower()
         )
-        unseen = sorted(dev_emotions - set(emotions))
-        if unseen:
-            raise ValueError(
-                f"{source} Development labels absent from Train: {unseen}"
-            )
+        selected_emotions = SOURCE_EMOTIONS.get(source)
+        if selected_emotions:
+            missing_train = sorted(set(selected_emotions) - set(emotions))
+            missing_dev = sorted(set(selected_emotions) - dev_emotions)
+            if missing_train or missing_dev:
+                raise ValueError(
+                    f"{source} selected labels missing from "
+                    f"Train={missing_train}, Development={missing_dev}"
+                )
+        else:
+            invalid = sorted(dev_emotions - set(emotions))
+            if invalid:
+                raise ValueError(
+                    f"{source} Development labels absent from Train: {invalid}"
+                )
         frames.append(frame)
         emotions_by_source[source] = emotions
         train_csvs[source] = train_csv

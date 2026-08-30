@@ -63,7 +63,10 @@ class ExperimentContractTests(unittest.TestCase):
             ROOT / "scripts/nchc/prepare_features.sbatch"
         ).read_text()
         self.assertIn('"$feature_root/READY"', runner)
+        self.assertIn("scripts/nchc/prepare_once.sh", preparation)
         self.assertIn("preflight_inputs.py", preparation)
+        submitter = (ROOT / "scripts/nchc/submit_all.sh").read_text()
+        self.assertNotIn("bash scripts/nchc/prepare_once.sh", submitter)
 
     def test_each_condition_gets_an_independent_slurm_job(self):
         submitter = (ROOT / "scripts/nchc/submit_all.sh").read_text()

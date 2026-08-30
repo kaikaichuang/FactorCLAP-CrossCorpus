@@ -18,6 +18,7 @@ set -euo pipefail
 
 repo_root=/work/u1667110/clap_series/FactorCLAP-CrossCorpus
 cd "$repo_root"
+bash scripts/nchc/prepare_once.sh
 python -u prepare_crop_features.py \
     --split-root /work/u1667110/clap_series/dataset/CrossCorpus/splits \
     --feature-root /work/u1667110/clap_series/dataset/CrossCorpus/features \

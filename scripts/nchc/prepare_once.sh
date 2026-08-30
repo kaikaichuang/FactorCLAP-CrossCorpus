@@ -37,4 +37,4 @@ test -f "$split_root/ravdess/test.csv"
 test -f "$split_root/tess/full.csv"
 test -f "$initial"
 python -m unittest discover -s tests -v
-echo "Preflight passed. Run scripts/nchc/submit_all.sh to prepare matched features and train."
+echo "Initial checks passed; continuing crop-feature preparation."

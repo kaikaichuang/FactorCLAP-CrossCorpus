@@ -81,13 +81,21 @@ updated on NCHC:
 
 ```bash
 cd /work/u1667110/clap_series/FactorCLAP-CrossCorpus
-bash scripts/nchc/submit_all.sh
+sbatch scripts/nchc/prepare_features.sbatch
 ```
 
-All four one-model jobs have an `afterok` dependency on crop-feature preparation
-and full input preflight. Nano5 runs at most two concurrently, so the four jobs
-naturally execute in two waves without risking two models inside one 48-hour
-allocation.
+After that job succeeds and `runs/prepared_features/center5/READY` exists:
+
+```bash
+sbatch scripts/nchc/train_case.sbatch e0_emotion
+sbatch scripts/nchc/train_case.sbatch e1_smooth
+sbatch scripts/nchc/train_case.sbatch e2_factor
+sbatch scripts/nchc/train_case.sbatch e3_shuffled_factor
+```
+
+Nano5 runs at most two training jobs concurrently, so they naturally execute in
+two waves. The optional `submit_all.sh` performs only quick `sbatch` calls and
+uses `afterok` dependencies; no preparation runs in the login terminal.
 
 Each case trains first, then evaluates:
 

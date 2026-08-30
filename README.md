@@ -62,18 +62,31 @@ All four conditions use the same deterministic center five seconds. For Train
 utterances longer than five seconds, eGeMAPS is recomputed on precisely that
 interval before either SmoothCLAP tags or factor targets are built.
 
+Submit preparation first. All initialization, tests, crop-feature extraction,
+and input preflight execute inside this Slurm job, not in the login terminal:
+
 ```bash
 cd /work/u1667110/clap_series/FactorCLAP-CrossCorpus
-bash scripts/nchc/submit_all.sh
+sbatch scripts/nchc/prepare_features.sbatch
 ```
 
-The submitter first runs lightweight checks, then submits one crop-feature and
-full-input-preflight job. Four one-model jobs are submitted with `afterok`
-dependencies. Nano5 permits two concurrent jobs per user, so they run in two
-waves without chaining two 30-epoch models inside one 48-hour allocation. The
+After that job exits successfully and
+`runs/prepared_features/center5/READY` exists, submit the four models:
+
+```bash
+sbatch scripts/nchc/train_case.sbatch e0_emotion
+sbatch scripts/nchc/train_case.sbatch e1_smooth
+sbatch scripts/nchc/train_case.sbatch e2_factor
+sbatch scripts/nchc/train_case.sbatch e3_shuffled_factor
+```
+
+Nano5 permits two concurrent jobs per user, so these run in two waves. The
 preprocessing job requests one H100 because Nano5 partitions are GPU partitions,
 although extraction itself is CPU-bound. Each model resumes independently from
 `resume_latest.pth.tar` and performs all inference after training.
+
+Alternatively, `bash scripts/nchc/submit_all.sh` only issues `sbatch` calls and
+returns immediately; it no longer runs preparation in the login terminal.
 
 Results are written to:
 

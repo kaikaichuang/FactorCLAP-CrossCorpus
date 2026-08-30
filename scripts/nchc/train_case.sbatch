@@ -13,7 +13,6 @@
 
 ml purge
 ml load miniconda3/24.11.1
-conda activate clap
 set -euo pipefail
 
 if [[ $# -ne 2 ]]; then
@@ -21,4 +20,4 @@ if [[ $# -ne 2 ]]; then
     exit 2
 fi
 cd /work/u1667110/clap_series/FactorCLAP-CrossCorpus
-bash scripts/run_case.sh "$1" "$2"
+conda run --no-capture-output -n clap bash scripts/run_case.sh "$1" "$2"

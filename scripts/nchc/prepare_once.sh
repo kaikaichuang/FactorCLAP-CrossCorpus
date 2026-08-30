@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ml purge
-ml load miniconda3/24.11.1
-conda activate clap
-
 repo_root=/work/u1667110/clap_series/FactorCLAP-CrossCorpus
 old_initial=/work/u1667110/clap_series/SmoothCLAP-CrossCorpus/runs/_initial_states/smoothclapbase_seed3407.pth.tar
 initial="$repo_root/runs/_initial_states/smoothclapbase_seed3407.pth.tar"

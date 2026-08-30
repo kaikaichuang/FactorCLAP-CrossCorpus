@@ -58,6 +58,10 @@ cd /work/u1667110/clap_series/FactorCLAP-CrossCorpus
 sbatch scripts/nchc/prepare_features.sbatch
 ```
 
+The preparation job requests 12 CPU cores and uses the Slurm allocation as its
+feature-worker count. Both preparation and training use `conda run -n clap`,
+because `conda activate` is not initialized reliably in a clean batch shell.
+
 After that job succeeds and `runs/prepared_features/center5/READY` exists,
 submit the nine independent jobs. Submitting them is quick; Slurm queues them
 when only two H100 jobs may run concurrently.

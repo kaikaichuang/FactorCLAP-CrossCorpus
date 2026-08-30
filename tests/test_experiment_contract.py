@@ -58,9 +58,16 @@ class ExperimentContractTests(unittest.TestCase):
     def test_training_is_blocked_until_full_preflight(self):
         runner = (ROOT / "scripts/run_case.sh").read_text()
         preparation = (ROOT / "scripts/nchc/prepare_features.sbatch").read_text()
+        train_job = (ROOT / "scripts/nchc/train_case.sbatch").read_text()
+        prepare_once = (ROOT / "scripts/nchc/prepare_once.sh").read_text()
         self.assertIn('"$feature_root/READY"', runner)
         self.assertIn("scripts/nchc/prepare_once.sh", preparation)
         self.assertIn("preflight_inputs.py", preparation)
+        self.assertIn("#SBATCH --cpus-per-task=12", preparation)
+        self.assertIn('--num-workers "$SLURM_CPUS_PER_TASK"', preparation)
+        self.assertIn("conda run --no-capture-output -n clap", preparation)
+        self.assertIn("conda run --no-capture-output -n clap", train_job)
+        self.assertNotIn("conda activate", preparation + train_job + prepare_once)
         submitter = (ROOT / "scripts/nchc/submit_all.sh").read_text()
         self.assertNotIn("bash scripts/nchc/prepare_once.sh", submitter)
 
